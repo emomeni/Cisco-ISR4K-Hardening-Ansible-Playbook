@@ -1,0 +1,115 @@
+---
+# group_vars/all.yml - Cisco ISR 4000 Hardening Variables
+#
+# ENCRYPT THIS FILE before committing:
+#   ansible-vault encrypt group_vars/all.yml
+#
+# All values below use vault_ prefix. Replace placeholder strings
+# with real values, then encrypt the file.
+
+# ---------------------------------------------------------------
+# Ansible connection credentials
+# ---------------------------------------------------------------
+vault_ansible_user: "ansible-svc"
+vault_ansible_password: "CHANGE_ME_vault_encrypt"
+vault_enable_secret: "CHANGE_ME_vault_encrypt"
+
+# ---------------------------------------------------------------
+# Enable secret (type 8/9 scrypt hash written to running-config)
+# ---------------------------------------------------------------
+# Generate on the router:  enable algorithm-type scrypt secret <password>
+# Then paste the hash here so the playbook can set it idempotently.
+enable_secret_hash: "$9$CHANGE_ME_PASTE_SCRYPT_HASH_HERE"
+
+# ---------------------------------------------------------------
+# AAA / TACACS+
+# ---------------------------------------------------------------
+tacacs_server_ip: "10.0.50.10"
+tacacs_key: "CHANGE_ME_vault_encrypt"
+tacacs_server_group: "TACACS-SERVERS"
+
+# ---------------------------------------------------------------
+# SSH & Management ACL
+# ---------------------------------------------------------------
+ssh_rsa_key_bits: 4096
+mgmt_acl_name: "ACL-MGMT-ACCESS"
+mgmt_acl_permit_subnet: "10.0.50.0"
+mgmt_acl_permit_wildcard: "0.0.0.255"
+management_interface: "GigabitEthernet0/0/0"
+
+# ---------------------------------------------------------------
+# SNMPv3
+# ---------------------------------------------------------------
+snmp_group: "SNMPV3-RO"
+snmp_user: "snmpv3monitor"
+snmp_auth_pass: "CHANGE_ME_vault_encrypt"
+snmp_priv_pass: "CHANGE_ME_vault_encrypt"
+snmp_acl_name: "ACL-SNMP-ACCESS"
+snmp_acl_permit_subnet: "10.0.50.0"
+snmp_acl_permit_wildcard: "0.0.0.255"
+
+# ---------------------------------------------------------------
+# NTP
+# ---------------------------------------------------------------
+ntp_servers:
+  - ip: "10.0.50.20"
+    key_id: 1
+  - ip: "10.0.50.21"
+    key_id: 2
+ntp_key_algorithm: "md5"
+ntp_key_values:
+  1: "CHANGE_ME_vault_encrypt"
+  2: "CHANGE_ME_vault_encrypt"
+
+# ---------------------------------------------------------------
+# Syslog
+# ---------------------------------------------------------------
+syslog_server_ip: "10.0.50.30"
+syslog_facility: "local6"
+
+# ---------------------------------------------------------------
+# Banners
+# ---------------------------------------------------------------
+banner_login: |
+  ********************************************************************
+  *  AUTHORIZED ACCESS ONLY                                          *
+  *  This system is the property of [ORGANIZATION NAME].             *
+  *  Unauthorized access is prohibited and will be prosecuted         *
+  *  to the fullest extent of the law.                               *
+  *  All activity is monitored and logged.                           *
+  ********************************************************************
+
+banner_motd: |
+  *** This device is managed by [ORGANIZATION NAME] Network Ops ***
+  *** Unauthorized use is strictly prohibited ***
+
+banner_exec: |
+  You are connected to a managed network device.
+  All commands are logged. Proceed with caution.
+
+# ---------------------------------------------------------------
+# CoPP rate limits (packets per second)
+# ---------------------------------------------------------------
+copp_icmp_rate_bps: 8000
+copp_icmp_burst: 1500
+copp_ssh_rate_bps: 64000
+copp_ssh_burst: 8000
+copp_snmp_rate_bps: 32000
+copp_snmp_burst: 4000
+copp_routing_rate_bps: 128000
+copp_routing_burst: 16000
+copp_default_rate_bps: 8000
+copp_default_burst: 1000
+
+# ---------------------------------------------------------------
+# Password policy
+# ---------------------------------------------------------------
+password_min_length: 14
+
+# ---------------------------------------------------------------
+# VTY / Console timeouts (minutes seconds)
+# ---------------------------------------------------------------
+exec_timeout_minutes: 10
+exec_timeout_seconds: 0
+vty_line_start: 0
+vty_line_end: 15
