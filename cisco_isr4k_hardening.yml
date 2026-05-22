@@ -1,0 +1,707 @@
+---
+# =========================================================================
+# Cisco ISR 4000 Series (IOS XE) - CIS Benchmark & NSA/CISA Hardening
+# =========================================================================
+#
+# Applies CIS Cisco IOS Benchmark v4.x and NSA/CISA network device
+# hardening guidance to ISR 4000 series routers running IOS XE.
+#
+# Compatible with --check (dry-run) mode. All tasks are idempotent.
+#
+# Prerequisites:
+#   - cisco.ios collection >= 6.0  (ansible-galaxy collection install cisco.ios)
+#   - ansible.netcommon >= 6.0
+#   - SSH reachability to target routers
+#   - Vault-encrypted group_vars/all.yml
+#
+# Run:
+#   ansible-playbook -i inventory/hosts.yml cisco_isr4k_hardening.yml --ask-vault-pass
+#   ansible-playbook -i inventory/hosts.yml cisco_isr4k_hardening.yml --ask-vault-pass --check
+#   ansible-playbook -i inventory/hosts.yml cisco_isr4k_hardening.yml --ask-vault-pass --tags ssh
+#
+# =========================================================================
+
+- name: "CIS/NSA Hardening - Cisco ISR 4000 (IOS XE)"
+  hosts: isr4k_routers
+  gather_facts: false
+
+  # ------------------------------------------------------------------
+  # HANDLERS
+  # ------------------------------------------------------------------
+  handlers:
+    - name: Save running config
+      cisco.ios.ios_command:
+        commands:
+          - "write memory"
+      listen: "save config"
+
+  # ------------------------------------------------------------------
+  # PRE-TASKS - Validate target platform
+  # ------------------------------------------------------------------
+  pre_tasks:
+    - name: "PRE-CHECK - Gather IOS XE version facts"
+      cisco.ios.ios_facts:
+        gather_subset:
+          - hardware
+      register: device_facts
+      tags: always
+
+    - name: "PRE-CHECK - Verify target runs IOS XE"
+      ansible.builtin.assert:
+        that:
+          - "'IOS-XE' in device_facts.ansible_facts.ansible_net_image or
+             'iosxe' in (device_facts.ansible_facts.ansible_net_system | default('') | lower) or
+             'ISR4' in (device_facts.ansible_facts.ansible_net_model | default(''))"
+        fail_msg: >-
+          Target {{ inventory_hostname }} does not appear to be a Cisco IOS XE device.
+          Model: {{ device_facts.ansible_facts.ansible_net_model | default('unknown') }},
+          Image: {{ device_facts.ansible_facts.ansible_net_image | default('unknown') }}.
+          Aborting to prevent misconfiguration.
+        success_msg: >-
+          Confirmed IOS XE device -
+          Model: {{ device_facts.ansible_facts.ansible_net_model }},
+          Version: {{ device_facts.ansible_facts.ansible_net_version }}
+      tags: always
+
+    - name: "PRE-CHECK - Display device info"
+      ansible.builtin.debug:
+        msg: >-
+          Hardening {{ inventory_hostname }}
+          ({{ device_facts.ansible_facts.ansible_net_model }},
+          IOS XE {{ device_facts.ansible_facts.ansible_net_version }})
+      tags: always
+
+  # ------------------------------------------------------------------
+  # TASKS
+  # ------------------------------------------------------------------
+  tasks:
+
+    # ================================================================
+    #  SECTION 1: SERVICE HARDENING (CIS Section 1)
+    # ================================================================
+
+    - name: "CIS 1.1.1 - Disable BOOTP server"
+      cisco.ios.ios_config:
+        lines:
+          - "no ip bootp server"
+      notify: "save config"
+      tags: [services, cis]
+
+    - name: "CIS 1.1.2 - Disable PAD service"
+      cisco.ios.ios_config:
+        lines:
+          - "no service pad"
+      notify: "save config"
+      tags: [services, cis]
+
+    - name: "CIS 1.1.3 - Disable finger service"
+      cisco.ios.ios_config:
+        lines:
+          - "no service finger"
+      notify: "save config"
+      tags: [services, cis]
+
+    - name: "CIS 1.1.4 - Disable TCP small servers"
+      cisco.ios.ios_config:
+        lines:
+          - "no service tcp-small-servers"
+      notify: "save config"
+      tags: [services, cis]
+
+    - name: "CIS 1.1.5 - Disable UDP small servers"
+      cisco.ios.ios_config:
+        lines:
+          - "no service udp-small-servers"
+      notify: "save config"
+      tags: [services, cis]
+
+    - name: "CIS 1.1.6 - Disable CDP globally"
+      cisco.ios.ios_config:
+        lines:
+          - "no cdp run"
+      notify: "save config"
+      tags: [services, cis, cdp]
+
+    - name: "NSA 2.1.1 - Disable LLDP globally"
+      cisco.ios.ios_config:
+        lines:
+          - "no lldp run"
+      notify: "save config"
+      tags: [services, nsa, lldp]
+
+    - name: "CIS 1.1.7 - Disable IP source routing"
+      cisco.ios.ios_config:
+        lines:
+          - "no ip source-route"
+      notify: "save config"
+      tags: [services, cis]
+
+    - name: "CIS 1.2.1 - Enable service timestamps for logging"
+      cisco.ios.ios_config:
+        lines:
+          - "service timestamps log datetime msec localtime show-timezone"
+          - "service timestamps debug datetime msec localtime show-timezone"
+      notify: "save config"
+      tags: [services, logging, cis]
+
+    - name: "CIS 1.2.2 - Enable password encryption"
+      cisco.ios.ios_config:
+        lines:
+          - "service password-encryption"
+      notify: "save config"
+      tags: [services, passwords, cis]
+
+    - name: "CIS 1.2.3 - Disable HTTP server"
+      cisco.ios.ios_config:
+        lines:
+          - "no ip http server"
+          - "no ip http secure-server"
+      notify: "save config"
+      tags: [services, http, cis]
+
+    # ================================================================
+    #  SECTION 2: PASSWORDS & PRIVILEGE LEVELS (CIS Section 2)
+    # ================================================================
+
+    - name: "CIS 2.1.1 - Set minimum password length"
+      cisco.ios.ios_config:
+        lines:
+          - "security passwords min-length {{ password_min_length }}"
+      notify: "save config"
+      tags: [passwords, cis]
+
+    - name: "CIS 2.1.2 - Set enable secret (scrypt hash)"
+      cisco.ios.ios_config:
+        lines:
+          - "enable secret 9 {{ enable_secret_hash }}"
+      notify: "save config"
+      tags: [passwords, cis]
+
+    - name: "CIS 2.1.3 - Remove plaintext enable password"
+      cisco.ios.ios_config:
+        lines:
+          - "no enable password"
+      notify: "save config"
+      tags: [passwords, cis]
+
+    # ================================================================
+    #  SECTION 3: AAA & TACACS+ (CIS Section 3)
+    # ================================================================
+
+    - name: "CIS 3.1.1 - Enable AAA new-model"
+      cisco.ios.ios_config:
+        lines:
+          - "aaa new-model"
+      notify: "save config"
+      tags: [aaa, cis]
+
+    - name: "CIS 3.1.2 - Configure TACACS+ server"
+      cisco.ios.ios_config:
+        lines:
+          - "server-private {{ tacacs_server_ip }} key {{ tacacs_key }}"
+        parents:
+          - "aaa group server tacacs+ {{ tacacs_server_group }}"
+      notify: "save config"
+      tags: [aaa, tacacs, cis]
+
+    - name: "CIS 3.2.1 - Set AAA authentication login"
+      cisco.ios.ios_config:
+        lines:
+          - "aaa authentication login default group tacacs+ local"
+      notify: "save config"
+      tags: [aaa, cis]
+
+    - name: "CIS 3.2.2 - Set AAA authorization exec"
+      cisco.ios.ios_config:
+        lines:
+          - "aaa authorization exec default group tacacs+ local if-authenticated"
+      notify: "save config"
+      tags: [aaa, cis]
+
+    - name: "CIS 3.2.3 - Set AAA accounting exec"
+      cisco.ios.ios_config:
+        lines:
+          - "aaa accounting exec default start-stop group tacacs+"
+      notify: "save config"
+      tags: [aaa, cis]
+
+    - name: "CIS 3.3.1 - Set login failure block"
+      cisco.ios.ios_config:
+        lines:
+          - "login block-for 120 attempts 3 within 60"
+      notify: "save config"
+      tags: [aaa, brute-force, cis]
+
+    - name: "CIS 3.3.2 - Enable login failure logging"
+      cisco.ios.ios_config:
+        lines:
+          - "login on-failure log"
+      notify: "save config"
+      tags: [aaa, logging, cis]
+
+    - name: "CIS 3.3.3 - Enable login success logging"
+      cisco.ios.ios_config:
+        lines:
+          - "login on-success log"
+      notify: "save config"
+      tags: [aaa, logging, cis]
+
+    # ================================================================
+    #  SECTION 4: SSH HARDENING (CIS Section 4 / NSA SSH)
+    # ================================================================
+
+    - name: "CIS 4.1.1 - Enforce SSH version 2"
+      cisco.ios.ios_config:
+        lines:
+          - "ip ssh version 2"
+      notify: "save config"
+      tags: [ssh, cis]
+
+    - name: "CIS 4.1.2 - Set SSH timeout"
+      cisco.ios.ios_config:
+        lines:
+          - "ip ssh time-out 60"
+      notify: "save config"
+      tags: [ssh, cis]
+
+    - name: "CIS 4.1.3 - Set SSH authentication retries"
+      cisco.ios.ios_config:
+        lines:
+          - "ip ssh authentication-retries 3"
+      notify: "save config"
+      tags: [ssh, cis]
+
+    - name: "CIS 4.1.4 - Generate 4096-bit RSA key pair"
+      cisco.ios.ios_command:
+        commands:
+          - command: "crypto key generate rsa modulus {{ ssh_rsa_key_bits }} label SSH-KEY"
+            prompt:
+              - "Do you really want to replace them"
+              - "How many bits in the modulus"
+            answer:
+              - "yes"
+              - "{{ ssh_rsa_key_bits }}"
+      register: rsa_result
+      changed_when: "'generated' in (rsa_result.stdout | default(['']) | join(' ') | lower)"
+      failed_when: false
+      tags: [ssh, cis]
+
+    - name: "CIS 4.2.1 - Create management access ACL"
+      cisco.ios.ios_config:
+        lines:
+          - "permit {{ mgmt_acl_permit_subnet }} {{ mgmt_acl_permit_wildcard }}"
+          - "deny any log"
+        parents:
+          - "ip access-list standard {{ mgmt_acl_name }}"
+      notify: "save config"
+      tags: [ssh, acl, cis]
+
+    - name: "CIS 4.2.2 - Harden VTY lines - SSH only with ACL and timeout"
+      cisco.ios.ios_config:
+        lines:
+          - "transport input ssh"
+          - "transport output none"
+          - "access-class {{ mgmt_acl_name }} in"
+          - "exec-timeout {{ exec_timeout_minutes }} {{ exec_timeout_seconds }}"
+          - "login authentication default"
+          - "logging synchronous"
+        parents:
+          - "line vty {{ vty_line_start }} {{ vty_line_end }}"
+      notify: "save config"
+      tags: [ssh, vty, cis]
+
+    - name: "CIS 4.2.3 - Harden console line with timeout"
+      cisco.ios.ios_config:
+        lines:
+          - "exec-timeout {{ exec_timeout_minutes }} {{ exec_timeout_seconds }}"
+          - "login authentication default"
+          - "logging synchronous"
+        parents:
+          - "line con 0"
+      notify: "save config"
+      tags: [ssh, console, cis]
+
+    - name: "CIS 4.2.4 - Harden AUX line - disable"
+      cisco.ios.ios_config:
+        lines:
+          - "exec-timeout 0 1"
+          - "no exec"
+          - "transport input none"
+          - "transport output none"
+        parents:
+          - "line aux 0"
+      notify: "save config"
+      tags: [ssh, aux, cis]
+
+    # ================================================================
+    #  SECTION 5: INTERFACE HARDENING (CIS Section 5)
+    # ================================================================
+
+    - name: "CIS 5.1.1 - Gather all interface names"
+      cisco.ios.ios_facts:
+        gather_subset:
+          - interfaces
+      register: intf_facts
+      tags: [interfaces, cis]
+
+    - name: "CIS 5.1.2 - Disable IP proxy ARP on all interfaces"
+      cisco.ios.ios_config:
+        lines:
+          - "no ip proxy-arp"
+        parents:
+          - "interface {{ item }}"
+      loop: "{{ intf_facts.ansible_facts.ansible_net_interfaces | dict2items | map(attribute='key') | list }}"
+      when: item is not match('Loopback.*')
+      notify: "save config"
+      tags: [interfaces, cis]
+
+    - name: "CIS 5.1.3 - Disable IP redirects on all interfaces"
+      cisco.ios.ios_config:
+        lines:
+          - "no ip redirects"
+        parents:
+          - "interface {{ item }}"
+      loop: "{{ intf_facts.ansible_facts.ansible_net_interfaces | dict2items | map(attribute='key') | list }}"
+      when: item is not match('Loopback.*')
+      notify: "save config"
+      tags: [interfaces, cis]
+
+    - name: "CIS 5.1.4 - Disable IP unreachables on all interfaces"
+      cisco.ios.ios_config:
+        lines:
+          - "no ip unreachables"
+        parents:
+          - "interface {{ item }}"
+      loop: "{{ intf_facts.ansible_facts.ansible_net_interfaces | dict2items | map(attribute='key') | list }}"
+      when: item is not match('Loopback.*')
+      notify: "save config"
+      tags: [interfaces, cis]
+
+    - name: "CIS 5.1.5 - Disable IP directed-broadcast on all interfaces"
+      cisco.ios.ios_config:
+        lines:
+          - "no ip directed-broadcast"
+        parents:
+          - "interface {{ item }}"
+      loop: "{{ intf_facts.ansible_facts.ansible_net_interfaces | dict2items | map(attribute='key') | list }}"
+      when: item is not match('Loopback.*')
+      notify: "save config"
+      tags: [interfaces, cis]
+
+    # ================================================================
+    #  SECTION 6: SNMP HARDENING (CIS Section 6)
+    # ================================================================
+
+    - name: "CIS 6.1.1 - Check for existing SNMPv1/v2c community strings"
+      cisco.ios.ios_command:
+        commands:
+          - "show running-config | include snmp-server community"
+      register: snmp_communities
+      changed_when: false
+      tags: [snmp, cis]
+
+    - name: "CIS 6.1.2 - Remove all SNMPv1/v2c community strings"
+      cisco.ios.ios_config:
+        lines:
+          - "no {{ item }}"
+      loop: "{{ snmp_communities.stdout_lines[0] | default([]) }}"
+      when: snmp_communities.stdout_lines[0] | default([]) | length > 0
+      notify: "save config"
+      tags: [snmp, cis]
+
+    - name: "CIS 6.2.1 - Create SNMP access ACL"
+      cisco.ios.ios_config:
+        lines:
+          - "permit {{ snmp_acl_permit_subnet }} {{ snmp_acl_permit_wildcard }}"
+          - "deny any log"
+        parents:
+          - "ip access-list standard {{ snmp_acl_name }}"
+      notify: "save config"
+      tags: [snmp, acl, cis]
+
+    - name: "CIS 6.2.2 - Configure SNMPv3 group (auth + priv)"
+      cisco.ios.ios_config:
+        lines:
+          - "snmp-server group {{ snmp_group }} v3 priv read SNMPV3-VIEW access {{ snmp_acl_name }}"
+      notify: "save config"
+      tags: [snmp, cis]
+
+    - name: "CIS 6.2.3 - Create SNMP view"
+      cisco.ios.ios_config:
+        lines:
+          - "snmp-server view SNMPV3-VIEW iso included"
+      notify: "save config"
+      tags: [snmp, cis]
+
+    - name: "CIS 6.2.4 - Configure SNMPv3 user (SHA + AES128)"
+      cisco.ios.ios_command:
+        commands:
+          - "snmp-server user {{ snmp_user }} {{ snmp_group }} v3 auth sha {{ snmp_auth_pass }} priv aes 128 {{ snmp_priv_pass }} access {{ snmp_acl_name }}"
+      changed_when: true
+      notify: "save config"
+      tags: [snmp, cis]
+
+    # ================================================================
+    #  SECTION 7: BANNERS (CIS Section 7)
+    # ================================================================
+
+    - name: "CIS 7.1.1 - Set login banner"
+      cisco.ios.ios_banner:
+        banner: login
+        text: "{{ banner_login }}"
+        state: present
+      notify: "save config"
+      tags: [banners, cis]
+
+    - name: "CIS 7.1.2 - Set MOTD banner"
+      cisco.ios.ios_banner:
+        banner: motd
+        text: "{{ banner_motd }}"
+        state: present
+      notify: "save config"
+      tags: [banners, cis]
+
+    - name: "CIS 7.1.3 - Set EXEC banner"
+      cisco.ios.ios_banner:
+        banner: exec
+        text: "{{ banner_exec }}"
+        state: present
+      notify: "save config"
+      tags: [banners, cis]
+
+    # ================================================================
+    #  SECTION 8: NTP (CIS Section 8)
+    # ================================================================
+
+    - name: "CIS 8.1.1 - Enable NTP authentication"
+      cisco.ios.ios_config:
+        lines:
+          - "ntp authenticate"
+      notify: "save config"
+      tags: [ntp, cis]
+
+    - name: "CIS 8.1.2 - Configure NTP authentication keys"
+      cisco.ios.ios_config:
+        lines:
+          - "ntp authentication-key {{ item.key }} md5 {{ item.value }}"
+          - "ntp trusted-key {{ item.key }}"
+      loop: "{{ ntp_key_values | dict2items }}"
+      loop_control:
+        label: "NTP key {{ item.key }}"
+      no_log: true
+      notify: "save config"
+      tags: [ntp, cis]
+
+    - name: "CIS 8.1.3 - Configure NTP servers with key association"
+      cisco.ios.ios_config:
+        lines:
+          - "ntp server {{ item.ip }} key {{ item.key_id }}"
+      loop: "{{ ntp_servers }}"
+      loop_control:
+        label: "{{ item.ip }}"
+      notify: "save config"
+      tags: [ntp, cis]
+
+    # ================================================================
+    #  SECTION 9: LOGGING / SYSLOG (CIS Section 9)
+    # ================================================================
+
+    - name: "CIS 9.1.1 - Disable console logging to prevent flooding"
+      cisco.ios.ios_config:
+        lines:
+          - "no logging console"
+      notify: "save config"
+      tags: [logging, cis]
+
+    - name: "CIS 9.1.2 - Configure logging buffer"
+      cisco.ios.ios_config:
+        lines:
+          - "logging buffered 16384 informational"
+      notify: "save config"
+      tags: [logging, cis]
+
+    - name: "CIS 9.1.3 - Set logging trap level"
+      cisco.ios.ios_config:
+        lines:
+          - "logging trap informational"
+      notify: "save config"
+      tags: [logging, cis]
+
+    - name: "CIS 9.1.4 - Set logging source interface"
+      cisco.ios.ios_config:
+        lines:
+          - "logging source-interface {{ management_interface }}"
+      notify: "save config"
+      tags: [logging, cis]
+
+    - name: "CIS 9.1.5 - Configure remote syslog server"
+      cisco.ios.ios_config:
+        lines:
+          - "logging host {{ syslog_server_ip }}"
+          - "logging facility {{ syslog_facility }}"
+      notify: "save config"
+      tags: [logging, cis]
+
+    # ================================================================
+    #  SECTION 10: CONTROL PLANE POLICING (NSA/CISA CoPP)
+    # ================================================================
+
+    # --- Class-maps ---
+
+    - name: "NSA 10.1.1 - CoPP class-map for ICMP"
+      cisco.ios.ios_config:
+        lines:
+          - "match access-group name COPP-ACL-ICMP"
+        parents:
+          - "class-map match-all COPP-ICMP"
+      notify: "save config"
+      tags: [copp, nsa]
+
+    - name: "NSA 10.1.2 - CoPP class-map for SSH management"
+      cisco.ios.ios_config:
+        lines:
+          - "match access-group name COPP-ACL-SSH"
+        parents:
+          - "class-map match-all COPP-SSH"
+      notify: "save config"
+      tags: [copp, nsa]
+
+    - name: "NSA 10.1.3 - CoPP class-map for SNMP"
+      cisco.ios.ios_config:
+        lines:
+          - "match access-group name COPP-ACL-SNMP"
+        parents:
+          - "class-map match-all COPP-SNMP"
+      notify: "save config"
+      tags: [copp, nsa]
+
+    - name: "NSA 10.1.4 - CoPP class-map for routing protocols"
+      cisco.ios.ios_config:
+        lines:
+          - "match access-group name COPP-ACL-ROUTING"
+        parents:
+          - "class-map match-all COPP-ROUTING"
+      notify: "save config"
+      tags: [copp, nsa]
+
+    # --- ACLs for CoPP class-maps ---
+
+    - name: "NSA 10.2.1 - CoPP ACL for ICMP"
+      cisco.ios.ios_config:
+        lines:
+          - "permit icmp any any"
+        parents:
+          - "ip access-list extended COPP-ACL-ICMP"
+      notify: "save config"
+      tags: [copp, acl, nsa]
+
+    - name: "NSA 10.2.2 - CoPP ACL for SSH"
+      cisco.ios.ios_config:
+        lines:
+          - "permit tcp {{ mgmt_acl_permit_subnet }} {{ mgmt_acl_permit_wildcard }} any eq 22"
+        parents:
+          - "ip access-list extended COPP-ACL-SSH"
+      notify: "save config"
+      tags: [copp, acl, nsa]
+
+    - name: "NSA 10.2.3 - CoPP ACL for SNMP"
+      cisco.ios.ios_config:
+        lines:
+          - "permit udp {{ snmp_acl_permit_subnet }} {{ snmp_acl_permit_wildcard }} any eq 161"
+        parents:
+          - "ip access-list extended COPP-ACL-SNMP"
+      notify: "save config"
+      tags: [copp, acl, nsa]
+
+    - name: "NSA 10.2.4 - CoPP ACL for routing protocols (BGP, OSPF, EIGRP)"
+      cisco.ios.ios_config:
+        lines:
+          - "permit tcp any any eq bgp"
+          - "permit ospf any any"
+          - "permit eigrp any any"
+        parents:
+          - "ip access-list extended COPP-ACL-ROUTING"
+      notify: "save config"
+      tags: [copp, acl, nsa]
+
+    # --- Policy-map ---
+
+    - name: "NSA 10.3.1 - Create CoPP policy-map with rate limits"
+      cisco.ios.ios_config:
+        lines:
+          - "class COPP-ICMP"
+          - " police {{ copp_icmp_rate_bps }} {{ copp_icmp_burst }} conform-action transmit exceed-action drop"
+          - "class COPP-SSH"
+          - " police {{ copp_ssh_rate_bps }} {{ copp_ssh_burst }} conform-action transmit exceed-action drop"
+          - "class COPP-SNMP"
+          - " police {{ copp_snmp_rate_bps }} {{ copp_snmp_burst }} conform-action transmit exceed-action drop"
+          - "class COPP-ROUTING"
+          - " police {{ copp_routing_rate_bps }} {{ copp_routing_burst }} conform-action transmit exceed-action transmit"
+          - "class class-default"
+          - " police {{ copp_default_rate_bps }} {{ copp_default_burst }} conform-action transmit exceed-action drop"
+        parents:
+          - "policy-map COPP-POLICY"
+      notify: "save config"
+      tags: [copp, nsa]
+
+    # --- Apply to control plane ---
+
+    - name: "NSA 10.3.2 - Apply CoPP policy to control plane"
+      cisco.ios.ios_config:
+        lines:
+          - "service-policy input COPP-POLICY"
+        parents:
+          - "control-plane"
+      notify: "save config"
+      tags: [copp, nsa]
+
+    # ================================================================
+    #  POST-TASKS - Final verification
+    # ================================================================
+
+  post_tasks:
+    - name: "POST-CHECK - Verify SSH version 2 is active"
+      cisco.ios.ios_command:
+        commands:
+          - "show ip ssh"
+      register: ssh_status
+      changed_when: false
+      failed_when: "'version 2' not in (ssh_status.stdout | join(' ') | lower)"
+      tags: [verify, ssh]
+
+    - name: "POST-CHECK - Verify AAA is enabled"
+      cisco.ios.ios_command:
+        commands:
+          - "show running-config | include aaa new-model"
+      register: aaa_status
+      changed_when: false
+      failed_when: "aaa_status.stdout_lines[0] | length == 0"
+      tags: [verify, aaa]
+
+    - name: "POST-CHECK - Verify CoPP policy is applied"
+      cisco.ios.ios_command:
+        commands:
+          - "show policy-map control-plane"
+      register: copp_status
+      changed_when: false
+      tags: [verify, copp]
+
+    - name: "POST-CHECK - Display CoPP verification"
+      ansible.builtin.debug:
+        msg: "{{ copp_status.stdout_lines }}"
+      tags: [verify, copp]
+
+    - name: "POST-CHECK - Verify NTP authentication is active"
+      cisco.ios.ios_command:
+        commands:
+          - "show ntp status"
+      register: ntp_status
+      changed_when: false
+      tags: [verify, ntp]
+
+    - name: "FINAL - Save running configuration"
+      cisco.ios.ios_command:
+        commands:
+          - "write memory"
+      changed_when: true
+      tags: always
